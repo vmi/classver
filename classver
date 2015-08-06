@@ -1,0 +1,92 @@
+#!/usr/bin/perl
+
+# Fair License (Fair)
+#
+# Copyright 2015 Motonori IWAMURO
+#
+# Usage of the works is permitted provided that this instrument is
+# retained with the works, so that any entity that uses the works is
+# notified of this instrument.
+#
+# DISCLAIMER: THE WORKS ARE WITHOUT WARRANTY.
+
+use strict;
+use warnings;
+use File::Spec::Functions qw(rel2abs);
+use File::Path qw(remove_tree);
+
+our $TMP_DIR = "/tmp/classver";
+
+our $PS;
+
+if ($^O eq 'MSWin32' || $^O eq 'cygwin') {
+  $PS = qr/;/;
+} else {
+  $PS = qr/:/;
+}
+
+sub msg {
+  print @_, "\n";
+}
+
+sub emsg {
+  print STDERR @_, "\n";
+}
+
+sub javaver {
+  my $ver = shift;
+  $ver -= 44;
+  if ($ver < 1) {
+    return undef;
+  } elsif ($ver <= 4) {
+    return "1.$ver";
+  } else {
+    return "$ver.0";
+  }
+}
+
+sub show_classver {
+  my ($name, $file) = @_;
+  open(my $ifh, $file) or die "Can't open $file ($!)";
+  my $len = read($ifh, my $buffer, 8);
+  close($ifh);
+  my ($magic, $minor, $major) = unpack("Nnn", $buffer);
+  if ($len != 8 || $magic != 0xCAFEBABE) {
+    emsg "$name: not class file.";
+    return;
+  }
+  my $ver = javaver($major);
+  msg "Java $ver ($major.$minor): $name";
+}
+
+sub unpack_jar {
+  my $jar = rel2abs(shift);
+  if (-d $TMP_DIR) {
+    remove_tree($TMP_DIR);
+  }
+  mkdir($TMP_DIR);
+  emsg("* Get class file name from jar.");
+  chomp(my $class_file = `jar tf '$jar' | grep '\.class\$' | head -1`);
+  if (!$class_file) {
+    return undef;
+  }
+  emsg("* Extract class file.");
+  system("cd '$TMP_DIR'; jar xf '$jar' '$class_file'");
+  return "$TMP_DIR/$class_file";
+}
+
+for my $arg (@ARGV) {
+  for my $file (split($PS, $arg)) {
+    my $name = $file;
+    if ($file =~ /\.jar$/) {
+      $file = unpack_jar($file);
+      if (!$file) {
+	emsg "$name: $name does not have class file.";
+	next;
+      }
+    }
+    show_classver($name, $file);
+  }
+}
+
+remove_tree($TMP_DIR);
