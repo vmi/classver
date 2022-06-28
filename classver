@@ -18,9 +18,15 @@ use File::Path qw(remove_tree);
 our $TMP_DIR = "/tmp/classver";
 
 our $PS;
+our $IS_CYGWIN = 0;
 
-if ($^O eq 'MSWin32' || $^O eq 'cygwin') {
+delete %ENV{JAVA_TOOL_OPTIONS};
+
+if ($^O eq 'MSWin32') {
   $PS = qr/;/;
+} elsif ($^O eq 'cygwin') {
+  $PS = qr/;/;
+  $IS_CYGWIN = 1;
 } else {
   $PS = qr/:/;
 }
@@ -61,12 +67,15 @@ sub show_classver {
 
 sub unpack_jar {
   my $jar = rel2abs(shift);
+  if ($IS_CYGWIN) {
+    chomp($jar = `cygpath -am '$jar'`);
+  }
   if (-d $TMP_DIR) {
     remove_tree($TMP_DIR);
   }
   mkdir($TMP_DIR);
   emsg("* Get class file name from jar.");
-  chomp(my $class_file = `jar tf '$jar' | grep '\.class\$' | head -1`);
+  chomp(my $class_file = `jar tf '$jar' | tr -d '\r' | grep '\.class\$' | head -1`);
   if (!$class_file) {
     return undef;
   }
