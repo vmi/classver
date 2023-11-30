@@ -19,8 +19,9 @@ our $TMP_DIR = "/tmp/classver";
 
 our $PS;
 our $IS_CYGWIN = 0;
+our $STRICT_MODE = 0;
 
-delete %ENV{JAVA_TOOL_OPTIONS};
+delete $ENV{JAVA_TOOL_OPTIONS};
 
 if ($^O eq 'MSWin32') {
   $PS = qr/;/;
@@ -52,17 +53,40 @@ sub javaver {
 }
 
 sub show_classver {
-  my ($name, $file) = @_;
-  open(my $ifh, $file) or die "Can't open $file ($!)";
-  my $len = read($ifh, my $buffer, 8);
-  close($ifh);
-  my ($magic, $minor, $major) = unpack("Nnn", $buffer);
-  if ($len != 8 || $magic != 0xCAFEBABE) {
-    emsg "$name: not class file.";
-    return;
+  my ($name, $files) = @_;
+  my %vers;
+  for my $file (@$files) {
+    open(my $ifh, $file) or die "Can't open $file ($!)";
+    my $len = read($ifh, my $buffer, 8);
+    close($ifh);
+    my ($magic, $minor, $major) = unpack("Nnn", $buffer);
+    if ($len != 8 || $magic != 0xCAFEBABE) {
+      emsg "$name: not class file.";
+      return;
+    }
+    my $ver = javaver($major);
+    if (scalar(@$files) == 1) {
+      msg "Java $ver ($major.$minor): $name";
+      return;
+    }
+    ++$vers{$ver}{"$major.$minor"};
   }
-  my $ver = javaver($major);
-  msg "Java $ver ($major.$minor): $name";
+  if (scalar(%vers) == 1) {
+    my $ver = (keys(%vers))[0];
+    my %subvers = %{$vers{$ver}};
+    if (scalar(%subvers) == 1) {
+      my $subver = (keys(%subvers))[0];
+      msg "Java $ver ($subver): $name";
+      return;
+    }
+  }
+  my @ver_list = ();
+  for my $ver (keys %vers) {
+    my %subvers = %{$vers{$ver}};
+    push(@ver_list, $ver.' ('.join(', ', keys %subvers).')');
+
+    }
+  }
 }
 
 sub unpack_jar {
@@ -75,26 +99,44 @@ sub unpack_jar {
   }
   mkdir($TMP_DIR);
   emsg("* Get class file name from jar.");
-  chomp(my $class_file = `jar tf '$jar' | tr -d '\r' | grep '\.class\$' | head -1`);
-  if (!$class_file) {
+  open(my $fh, "jar tf '$jar' | tr -d '\\r' | grep '\\.class\$' |");
+  local $_;
+  my @class_files;
+  while (<$fh>) {
+    chomp;
+    push(@class_files, $_);
+    if ($STRICT_MODE) {
+      last;
+    }
+  }
+  close($fh);
+  if (scalar(@class_files) == 0) {
     return undef;
   }
   emsg("* Extract class file.");
-  system("cd '$TMP_DIR'; jar xf '$jar' '$class_file'");
-  return "$TMP_DIR/$class_file";
+  my $cmd = join(' ', "cd '$TMP_DIR'; jar xf '$jar' ", map {"'$_'"} @class_files);
+  system($cmd);
+  return [map  {"$TMP_DIR/$_"} @class_files];
+}
+
+$STRICT_MODE = $ARGV[0] eq '-s';
+if ($STRICT_MODE) {
+  shift(@ARGV);
+  emsg("* Enable strict mode.");
 }
 
 for my $arg (@ARGV) {
   for my $file (split($PS, $arg)) {
     my $name = $file;
+    my $files;
     if ($file =~ /\.jar$/) {
-      $file = unpack_jar($file);
+      $files = unpack_jar($file);
       if (!$file) {
 	emsg "$name: $name does not have class file.";
 	next;
       }
     }
-    show_classver($name, $file);
+    show_classver($name, $files);
   }
 }
 
